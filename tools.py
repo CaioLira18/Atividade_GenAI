@@ -11,44 +11,73 @@ DB_PATH = os.getenv("DB_PATH", "banco.db")
 
 def get_connection():
     return sqlite3.connect(DB_PATH)
-
+  
+def validar_query(query: str) -> str:
+    proibidos = ["DROP", "DELETE", "UPDATE", "INSERT", "ALTER"]
+    for p in proibidos:
+        if p in query.upper():
+            return "❌ Operação não permitida."
+    return query
+  
+def anonimizar(df):
+    if "nome_consumidor" in df.columns:
+        df["nome_consumidor"] = "Cliente_" + df.index.astype(str)
+    return df
+  
+def gerar_insight(df):
+    try:
+        if df.shape[1] >= 2:
+            col = df.columns[1]
+            max_val = df[col].max()
+            min_val = df[col].min()
+            return (
+                f"\n\nInsight:\n"
+                f"- Maior valor em '{col}': {max_val}\n"
+                f"- Menor valor em '{col}': {min_val}"
+            )
+    except:
+        pass
+    return ""
 
 @tool
 def executar_sql(query: str) -> str:
     """
     Executa uma query SQL de leitura (SELECT) no banco de dados de e-commerce.
     Retorna os resultados como texto formatado em tabela.
-    Use esta ferramenta para responder perguntas sobre vendas, produtos,
-    consumidores, vendedores, entregas e avaliações.
     """
     query = query.strip().rstrip(";")
 
-    # Guardrail: apenas leitura
     comando = query.split()[0].upper()
     if comando not in ("SELECT", "WITH"):
         return "❌ Apenas queries de leitura (SELECT) são permitidas."
 
+    query_validada = validar_query(query)
+    if query_validada.startswith("❌"):
+        return query_validada
+
     try:
         conn = get_connection()
-        df = pd.read_sql_query(query, conn)
+        df = pd.read_sql_query(query_validada, conn)
         conn.close()
 
         if df.empty:
             return "A consulta não retornou resultados."
 
-        # Limita exibição a 50 linhas para não sobrecarregar o contexto
+        df = anonimizar(df)
+
         if len(df) > 50:
             resultado = df.head(50).to_markdown(index=False)
             resultado += f"\n\n_(mostrando 50 de {len(df)} resultados)_"
         else:
             resultado = df.to_markdown(index=False)
 
-        return resultado
+        insight = gerar_insight(df)
+
+        return resultado + insight
 
     except Exception as e:
-        return f"❌ Erro ao executar a query: {str(e)}"
-
-
+        return f"Erro ao executar a query: {str(e)}"
+      
 @tool
 def gerar_grafico(query: str, tipo: str, titulo: str, coluna_x: str, coluna_y: str) -> str:
     """

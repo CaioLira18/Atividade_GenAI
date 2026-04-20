@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
 from prompts import SYSTEM_PROMPT
 from tools import executar_sql, gerar_grafico, listar_tabelas
@@ -12,16 +12,14 @@ from tools import executar_sql, gerar_grafico, listar_tabelas
 # ──────────────────────────────────────────────
 # Configuração
 # ──────────────────────────────────────────────
-
 load_dotenv()
 
-if not os.getenv("GOOGLE_API_KEY"):
-    raise ValueError("❌ Variável GOOGLE_API_KEY não encontrada. Configure no .env")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
+if not GOOGLE_API_KEY:
+    raise ValueError("❌ GOOGLE_API_KEY não encontrada")
 
-# ──────────────────────────────────────────────
-# Modelo + tools (NOVO PADRÃO)
-# ──────────────────────────────────────────────
+os.environ["GOOGLE_API_KEY"] = GOOGLE_API_KEY
 
 llm = ChatGoogleGenerativeAI(
     model="gemini-2.5-flash",
@@ -29,10 +27,10 @@ llm = ChatGoogleGenerativeAI(
 )
 
 tools = [executar_sql, gerar_grafico, listar_tabelas]
-
-# 🔥 Aqui está a mudança principal
 llm_with_tools = llm.bind_tools(tools)
 
+# Mapa de nome → função para execução das tools
+tools_map = {t.name: t for t in tools}
 
 # ──────────────────────────────────────────────
 # Prompt
@@ -46,45 +44,83 @@ prompt = ChatPromptTemplate.from_messages([
 
 
 # ──────────────────────────────────────────────
-# Execução
+# Execução com loop de tool calls
 # ──────────────────────────────────────────────
+
+cache = {}
 
 def run_agent(pergunta: str, chat_history: list):
-    chain = prompt | llm_with_tools
+    if pergunta in cache:
+        return cache[pergunta], chat_history
 
-    resposta = chain.invoke({
-        "input": pergunta,
-        "chat_history": chat_history,
-    })
+    # Monta as mensagens completas (histórico + pergunta atual)
+    mensagens = []
+    # Adiciona system + histórico via prompt template
+    formatted = prompt.format_messages(
+        input=pergunta,
+        chat_history=chat_history,
+    )
 
-    # 🔥 Se o modelo quiser usar uma tool
-    if hasattr(resposta, "tool_calls") and resposta.tool_calls:
-        for tool_call in resposta.tool_calls:
-            nome = tool_call["name"]
-            args = tool_call["args"]
+    try:
+        resposta = llm_with_tools.invoke(formatted)
+    except Exception as e:
+        if "429" in str(e):
+            return "Limite da API atingido. Tente novamente em alguns segundos.", chat_history
+        raise e
 
-            # Executa a tool correta
-            for tool in tools:
-                if tool.name == nome:
-                    resultado_tool = tool.invoke(args)
+    # Loop: enquanto o modelo quiser usar ferramentas, executamos e devolvemos o resultado
+    max_iter = 10
+    iteracao = 0
 
-                    # adiciona no histórico como resposta da tool
-                    chat_history.append(resposta)
-                    chat_history.append(
-                        AIMessage(content=str(resultado_tool))
-                    )
+    while resposta.tool_calls and iteracao < max_iter:
+        iteracao += 1
 
-                    return str(resultado_tool), chat_history
+        # Adiciona a resposta do modelo (com tool_calls) ao histórico de mensagens
+        formatted.append(resposta)
 
-    # Caso não use tool
+        # Executa cada tool call e coleta os resultados
+        for tc in resposta.tool_calls:
+            tool_name = tc["name"]
+            tool_args = tc["args"]
+            tool_id   = tc["id"]
+
+            if tool_name in tools_map:
+                tool_result = tools_map[tool_name].invoke(tool_args)
+            else:
+                tool_result = f"❌ Ferramenta '{tool_name}' não encontrada."
+
+            formatted.append(
+                ToolMessage(content=str(tool_result), tool_call_id=tool_id)
+            )
+
+        # Chama o modelo novamente com os resultados das ferramentas
+        try:
+            resposta = llm_with_tools.invoke(formatted)
+        except Exception as e:
+            if "429" in str(e):
+                return "Limite da API atingido. Tente novamente em alguns segundos.", chat_history
+            raise e
+
+    # Extrai o texto final
+    if isinstance(resposta.content, list):
+        # Gemini pode retornar lista de partes
+        resultado = " ".join(
+            p.get("text", "") if isinstance(p, dict) else str(p)
+            for p in resposta.content
+        ).strip()
+    else:
+        resultado = resposta.content or "Sem resposta."
+
+    cache[pergunta] = resultado
+
     chat_history.append(HumanMessage(content=pergunta))
-    chat_history.append(resposta)
+    chat_history.append(AIMessage(content=resultado))
 
-    return resposta.content, chat_history
+    return resultado, chat_history
 
 
 # ──────────────────────────────────────────────
-# Loop
+# Loop CLI
 # ──────────────────────────────────────────────
 
 def main():
