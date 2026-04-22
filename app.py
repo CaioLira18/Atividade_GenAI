@@ -22,12 +22,10 @@ from agent import run_agent
 
 st.set_page_config(
     page_title="Agente de E-commerce",
-    page_icon="🛒",
     layout="centered",
 )
 
-st.title("🛒 Agente de E-commerce")
-st.caption("Faça perguntas em português sobre vendas, produtos, entregas e avaliações.")
+st.title("Agente de E-commerce")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Estado da sessão
