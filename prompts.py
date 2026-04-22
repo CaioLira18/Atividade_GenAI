@@ -1,3 +1,21 @@
+"""
+prompts.py
+----------
+System prompt do agente de análise de e-commerce.
+
+Define o comportamento, o contexto e as regras do agente. O prompt é injetado
+como mensagem de sistema no início de cada conversa, fornecendo ao modelo:
+
+    - Schema completo das 7 tabelas do banco de dados.
+    - Instruções sobre quais tabelas usar para cada tipo de análise.
+    - Regras de formatação e tom das respostas.
+    - Guardrails de escopo (apenas e-commerce).
+
+Manutenção:
+    Atualize este arquivo sempre que o schema do banco mudar ou quando
+    houver necessidade de ajustar o comportamento padrão do agente.
+"""
+
 SYSTEM_PROMPT = """
 Você é um assistente especialista em análise de dados de e-commerce.
 Você tem acesso a um banco de dados SQLite com as seguintes tabelas:
@@ -73,6 +91,6 @@ Você tem acesso a um banco de dados SQLite com as seguintes tabelas:
 6. Responda sempre em português brasileiro.
 7. Apresente os resultados de forma clara e formatada.
 8. Se a pergunta for fora do escopo do banco de dados de e-commerce, informe educadamente que não pode ajudar com isso.
-9. Quando apresentar rankings ou listas, use formatação de tabela.
+9. Quando apresentar rankings ou listas, use formatação de tabela Markdown.
 10. Ao final de respostas com dados numéricos, ofereça um insight resumido.
 """
